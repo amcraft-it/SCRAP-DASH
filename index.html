@@ -502,17 +502,38 @@ function drawTrendByCard(){
   });
   // color by severity
   function col(y){ return y>=15?'#f4695f':y>=7?'#f5b656':'#37c98b'; }
+
+  // overall average scrap rate across the shown cards (volume-weighted = true rate)
+  var totL=0,totS=0; rows.forEach(function(r){totL+=r.launched;totS+=r.scrap;});
+  var avg = totL? +(totS/totL*100).toFixed(2) : 0;
+
+  // moving average of card scrap rate, window scales with count
+  var win = Math.max(5, Math.round(pts.length/12));
+  var trend = pts.map(function(_,i){
+    var a=Math.max(0,i-Math.floor(win/2)), b=Math.min(pts.length,i+Math.ceil(win/2));
+    var sum=0,n=0; for(var j=a;j<b;j++){sum+=pts[j].y;n++;}
+    return { x:i, y:+(sum/n).toFixed(2) };
+  });
+
   mkChart('trend','scatter',{
-    datasets:[{
-      label:'Task cards',
-      data:pts,
-      pointRadius:4, pointHoverRadius:7,
-      pointBackgroundColor:pts.map(p=>col(p.y)),
-      pointBorderColor:pts.map(p=>col(p.y))
-    }]
+    datasets:[
+      { type:'line', label:'Trend ('+win+'-card avg)', data:trend,
+        borderColor:'#4ea1ff', backgroundColor:'rgba(78,161,255,.10)',
+        borderWidth:2, pointRadius:0, tension:.35, fill:true, order:1 },
+      { type:'line', label:'Average '+avg+'%',
+        data:[{x:0,y:avg},{x:Math.max(pts.length-1,1),y:avg}],
+        borderColor:'#9aa4b2', borderWidth:1.5, borderDash:[6,5],
+        pointRadius:0, fill:false, order:2 },
+      { label:'Task cards', data:pts, order:3,
+        pointRadius:4, pointHoverRadius:7,
+        pointBackgroundColor:pts.map(p=>col(p.y)),
+        pointBorderColor:pts.map(p=>col(p.y)) }
+    ]
   },{
-    plugins:{legend:{display:false},
-      tooltip:{callbacks:{
+    plugins:{legend:{display:true,labels:{color:'#9aa4b2',boxWidth:14,usePointStyle:true,
+        filter:function(it){ return it.text!=='Task cards'; }}},
+      tooltip:{filter:function(it){ return it.dataset.label==='Task cards'; },
+        callbacks:{
         title:function(items){ var r=items[0].raw.r; return (r.pn||'(no part)'); },
         label:function(c){ var r=c.raw.r; return [
           'WO: '+(r.wo||'—'),
@@ -525,7 +546,7 @@ function drawTrendByCard(){
       }}},
     scales:{
       y:{ticks:{color:'#9aa4b2',callback:v=>v+'%'},grid:{color:'#22262f'},beginAtZero:true,title:{display:true,text:'Scrap rate',color:'#9aa4b2'}},
-      x:{ticks:{display:false},grid:{display:false},title:{display:true,text:rows.length+' cards (oldest → newest)',color:'#9aa4b2'}}
+      x:{type:'linear',ticks:{display:false},grid:{display:false},title:{display:true,text:rows.length+' cards (oldest → newest)',color:'#9aa4b2'}}
     }
   });
 }
