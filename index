@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AM-Craft · Scrap & Production Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://amcraft-it.github.io/auth/auth.js"></script>
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --panel2:#1e222b; --line:#2a2f3a;
+    --ink:#e8ecf3; --dim:#9aa4b2; --accent:#4ea1ff; --good:#37c98b;
+    --warn:#f5b656; --bad:#f4695f; --chip:#232833;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.45 -apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif}
+  header{padding:16px 20px;border-bottom:1px solid var(--line);
+    display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  header h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.2px}
+  header .gen{color:var(--dim);font-size:12px;margin-left:auto}
+  .wrap{padding:18px 20px;max-width:1280px;margin:0 auto}
+  .filters{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+  .filters label{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--dim)}
+  select,input{background:var(--panel2);color:var(--ink);border:1px solid var(--line);
+    border-radius:8px;padding:8px 10px;font-size:13px;min-width:150px}
+  input[type=search]{min-width:190px}
+  button.reset{align-self:flex-end;background:var(--chip);color:var(--ink);
+    border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
+  button.reset:hover{border-color:var(--accent)}
+  .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:18px}
+  .kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
+  .kpi .l{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px}
+  .kpi .v{font-size:22px;font-weight:650;margin-top:4px}
+  .kpi .s{font-size:11px;color:var(--dim);margin-top:2px}
+  .rate .v{color:var(--accent)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:14px 16px;margin-bottom:16px}
+  .card h2{font-size:13px;margin:0 0 12px;font-weight:600;color:var(--ink);
+    display:flex;align-items:center;gap:10px}
+  .card h2 .hint{font-weight:400;color:var(--dim);font-size:11px}
+  .grid2{display:grid;grid-template-columns:2fr 1fr;gap:16px}
+  .seg{display:flex;gap:4px;margin-left:auto}
+  .seg button{background:var(--chip);border:1px solid var(--line);color:var(--dim);
+    border-radius:7px;padding:4px 9px;font-size:11px;cursor:pointer}
+  .seg button.on{color:var(--ink);border-color:var(--accent)}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th,td{text-align:right;padding:7px 9px;border-bottom:1px solid var(--line);white-space:nowrap}
+  th:first-child,td:first-child{text-align:left}
+  th{color:var(--dim);font-weight:500;font-size:11px;text-transform:uppercase;
+    letter-spacing:.3px;cursor:pointer;user-select:none}
+  tbody tr{cursor:pointer}
+  tbody tr:hover{background:var(--panel2)}
+  tbody tr.sel{background:#22344a}
+  .bar{display:inline-block;height:8px;border-radius:4px;background:var(--accent);vertical-align:middle}
+  .pill{font-size:11px;padding:1px 7px;border-radius:20px;background:var(--chip);color:var(--dim)}
+  .rate-hi{color:var(--bad)} .rate-md{color:var(--warn)} .rate-lo{color:var(--good)}
+  .quality{border-color:#3a2a2a}
+  .quality summary{cursor:pointer;color:var(--warn)}
+  .quality code{background:var(--panel2);padding:1px 5px;border-radius:4px}
+  .muted{color:var(--dim)}
+  .tabsRow{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+  .tabsRow button{background:var(--chip);border:1px solid var(--line);color:var(--dim);
+    border-radius:8px;padding:7px 13px;cursor:pointer;font-size:13px}
+  .tabsRow button.on{color:var(--ink);border-color:var(--accent);background:var(--panel2)}
+  #loading{padding:60px;text-align:center;color:var(--dim)}
+  canvas{max-height:300px}
+  @media(max-width:900px){.kpis{grid-template-columns:repeat(3,1fr)}.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Scrap & Production Dashboard</h1>
+  <span class="gen" id="gen"></span>
+</header>
+
+<div id="loading">Loading production data…</div>
+
+<div class="wrap" id="app" style="display:none">
+
+  <div class="filters">
+    <label>Time frame
+      <select id="fTime">
+        <option value="all">All time</option>
+        <option value="12">Last 12 months</option>
+        <option value="6">Last 6 months</option>
+        <option value="3">Last 3 months</option>
+      </select>
+    </label>
+    <label>Printer
+      <select id="fPrinter"><option value="">All printers</option></select>
+    </label>
+    <label>Part number
+      <input type="search" id="fPart" list="partList" placeholder="All parts — type to filter">
+      <datalist id="partList"></datalist>
+    </label>
+    <label>Work order
+      <input type="search" id="fWO" list="woList" placeholder="All work orders">
+      <datalist id="woList"></datalist>
+    </label>
+    <button class="reset" id="reset">Reset</button>
+  </div>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="card">
+    <h2>Monthly trend <span class="hint">finished cards only · click a point to focus that month</span>
+      <span class="seg" id="trendSeg">
+        <button data-m="rate" class="on">Scrap rate</button>
+        <button data-m="scrap">Scrapped</button>
+        <button data-m="launched">Launched</button>
+        <button data-m="passed">Passed</button>
+      </span>
+    </h2>
+    <canvas id="trend"></canvas>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h2>Where scrap happens <span class="hint">stages overlap — not additive</span></h2>
+      <canvas id="stages"></canvas>
+    </div>
+    <div class="card">
+      <h2>Yield <span class="hint">passed ÷ launched</span></h2>
+      <canvas id="yield"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="tabsRow" id="breakTabs">
+      <button data-b="pn" class="on">By part number</button>
+      <button data-b="printer">By printer</button>
+      <button data-b="wo">By work order</button>
+    </div>
+    <div style="display:flex;gap:12px;align-items:center;margin-bottom:10px">
+      <label class="muted" style="font-size:12px">Min launched
+        <input type="number" id="minVol" value="10" min="0" style="min-width:80px;margin-left:6px">
+      </label>
+      <span class="muted" style="font-size:12px" id="breakCount"></span>
+    </div>
+    <table id="breakTable">
+      <thead></thead><tbody></tbody>
+    </table>
+  </div>
+
+  <details class="card quality" id="qualityCard">
+    <summary></summary>
+    <div id="qualityBody" style="margin-top:10px"></div>
+  </details>
+
+</div>
+
+<script>
+// ==== CONFIG ====================================================
+// Point this at your deployed backend /exec URL:
+var API = 'https://script.google.com/macros/s/AKfycbwUVcY8ymMxuFuom-FMGK2KZdVjWQSS-CS1zFP_fhm3V0n9wculfol7Rjf81E5g0bxA-g/exec';
+
+// ==== DATA LOAD (JSONP) =========================================
+var DATA = null;
+function load(){
+  var cb = 'scrapcb_' + Date.now();
+  window[cb] = function(res){
+    delete window[cb];
+    if(!res || !res.ok){ document.getElementById('loading').textContent =
+      'Error: ' + (res && res.error ? res.error : 'no data'); return; }
+    DATA = res;
+    boot();
+  };
+  var s = document.createElement('script');
+  s.src = API + (API.indexOf('?')<0?'?':'&') + 'callback=' + cb + '&_=' + Date.now();
+  s.onerror = function(){ document.getElementById('loading').textContent =
+    'Network error contacting backend.'; };
+  document.body.appendChild(s);
+}
+
+// ==== STATE =====================================================
+var F = { time:'all', printer:'', part:'', wo:'' };
+var trendMetric = 'rate';
+var breakBy = 'pn';
+var sortState = { key:'rate', dir:-1 };
+var charts = {};
+
+function boot(){
+  document.getElementById('loading').style.display='none';
+  document.getElementById('app').style.display='block';
+  document.getElementById('gen').textContent =
+    'updated ' + new Date(DATA.generated).toLocaleString();
+
+  // populate filter lists
+  var printers = uniq(DATA.rows.map(r=>r.printer).filter(Boolean)).sort();
+  var sel = document.getElementById('fPrinter');
+  printers.forEach(p=>{ var o=document.createElement('option');o.value=p;o.textContent=p;sel.appendChild(o); });
+  fillList('partList', uniq(DATA.rows.map(r=>r.pn).filter(Boolean)).sort());
+  fillList('woList',   uniq(DATA.rows.map(r=>r.wo).filter(Boolean)).sort());
+
+  // events
+  document.getElementById('fTime').onchange   = e=>{F.time=e.target.value;render();};
+  document.getElementById('fPrinter').onchange= e=>{F.printer=e.target.value;render();};
+  document.getElementById('fPart').oninput     = e=>{F.part=e.target.value.trim();render();};
+  document.getElementById('fWO').oninput       = e=>{F.wo=e.target.value.trim();render();};
+  document.getElementById('reset').onclick     = ()=>{
+    F={time:'all',printer:'',part:'',wo:''};
+    document.getElementById('fTime').value='all';
+    document.getElementById('fPrinter').value='';
+    document.getElementById('fPart').value='';
+    document.getElementById('fWO').value='';
+    render();
+  };
+  document.getElementById('minVol').oninput = render;
+  document.querySelectorAll('#trendSeg button').forEach(b=>b.onclick=()=>{
+    trendMetric=b.dataset.m;
+    document.querySelectorAll('#trendSeg button').forEach(x=>x.classList.toggle('on',x===b));
+    drawTrend();
+  });
+  document.querySelectorAll('#breakTabs button').forEach(b=>b.onclick=()=>{
+    breakBy=b.dataset.b;
+    document.querySelectorAll('#breakTabs button').forEach(x=>x.classList.toggle('on',x===b));
+    // sensible default sort per view
+    sortState={key:'rate',dir:-1};
+    drawBreak();
+  });
+
+  renderQuality();
+  render();
+}
+
+// ==== FILTERING =================================================
+function activeRows(){
+  var cutoff = null;
+  if(F.time!=='all'){
+    var months = parseInt(F.time,10);
+    var d = new Date(); d.setMonth(d.getMonth()-months);
+    cutoff = d.getFullYear()+'-'+pad(d.getMonth()+1);
+  }
+  return DATA.rows.filter(function(r){
+    if(F.printer && r.printer!==F.printer) return false;
+    if(F.part && r.pn!==F.part) return false;
+    if(F.wo && r.wo!==F.wo) return false;
+    if(cutoff && (!r.ym || r.ym < cutoff)) return false;
+    return true;
+  });
+}
+
+// ==== RENDER ====================================================
+function render(){
+  var rows = activeRows();
+  drawKpis(rows);
+  drawTrend();          // trend uses its own finished-only subset
+  drawStages(rows);
+  drawYield(rows);
+  drawBreak();
+}
+
+function agg(rows){
+  var a={launched:0,printed:0,passed:0,scrap:0,sPrint:0,sPP:0,sQC:0,cards:0};
+  rows.forEach(r=>{a.launched+=r.launched;a.printed+=r.printed;a.passed+=r.passed;
+    a.scrap+=r.scrap;a.sPrint+=r.sPrint;a.sPP+=r.sPP;a.sQC+=r.sQC;a.cards++;});
+  a.rate = a.launched? a.scrap/a.launched : 0;
+  a.yield = a.launched? a.passed/a.launched : 0;
+  return a;
+}
+
+function drawKpis(rows){
+  var a=agg(rows);
+  var unbucketed = rows.filter(r=>!r.finished).length;
+  var kpis=[
+    ['Cards', fmt(a.cards), F.time==='all'?'all':'in range'],
+    ['Launched', fmt(a.launched), ''],
+    ['Printed', fmt(a.printed), ''],
+    ['Passed', fmt(a.passed), (a.yield*100).toFixed(1)+'% yield'],
+    ['Total scrapped', fmt(a.scrap), 'per-card total'],
+    ['Scrap rate', (a.rate*100).toFixed(2)+'%', 'scrapped ÷ launched', 'rate']
+  ];
+  document.getElementById('kpis').innerHTML = kpis.map(function(k){
+    return '<div class="kpi '+(k[3]||'')+'"><div class="l">'+k[0]+'</div>'+
+      '<div class="v">'+k[1]+'</div><div class="s">'+k[2]+'</div></div>';
+  }).join('') +
+  (unbucketed? '<div class="kpi"><div class="l">Unfinished</div><div class="v">'+
+    fmt(unbucketed)+'</div><div class="s">no finish date — excl. from trend</div></div>':'');
+}
+
+// monthly series (finished cards only)
+function monthly(rows){
+  var m={};
+  rows.forEach(function(r){
+    if(!r.ym) return;
+    var o=m[r.ym]||(m[r.ym]={launched:0,scrap:0,passed:0,printed:0});
+    o.launched+=r.launched;o.scrap+=r.scrap;o.passed+=r.passed;o.printed+=r.printed;
+  });
+  return Object.keys(m).sort().map(function(k){
+    var o=m[k]; o.ym=k; o.rate=o.launched?o.scrap/o.launched:0; return o;
+  });
+}
+
+function drawTrend(){
+  var rows=activeRows();
+  var series=monthly(rows);
+  var labels=series.map(s=>s.ym);
+  var metric=trendMetric;
+  var vals=series.map(s=> metric==='rate'? +(s.rate*100).toFixed(2) : s[metric] );
+  var isRate=metric==='rate';
+  mkChart('trend','line',{
+    labels:labels,
+    datasets:[{
+      label: metric==='rate'?'Scrap rate %':cap(metric),
+      data:vals, borderColor:'#4ea1ff', backgroundColor:'rgba(78,161,255,.12)',
+      fill:true, tension:.25, pointRadius:3, pointHoverRadius:6, borderWidth:2
+    }]
+  },{
+    plugins:{legend:{display:false},
+      tooltip:{callbacks:{label:c=> isRate? c.parsed.y+'%' : fmt(c.parsed.y)}}},
+    scales:{y:{ticks:{color:'#9aa4b2',callback:v=>isRate?v+'%':v},grid:{color:'#22262f'},beginAtZero:true},
+            x:{ticks:{color:'#9aa4b2'},grid:{display:false}}}
+  });
+}
+
+function drawStages(rows){
+  var a=agg(rows);
+  mkChart('stages','bar',{
+    labels:['Print','Post-proc','QC'],
+    datasets:[{data:[a.sPrint,a.sPP,a.sQC],
+      backgroundColor:['#f4695f','#f5b656','#4ea1ff'],borderRadius:6}]
+  },{indexAxis:'y',plugins:{legend:{display:false},
+      tooltip:{callbacks:{label:c=>fmt(c.parsed.x)+' scrapped'}}},
+    scales:{x:{ticks:{color:'#9aa4b2'},grid:{color:'#22262f'},beginAtZero:true},
+            y:{ticks:{color:'#e8ecf3'},grid:{display:false}}}});
+}
+
+function drawYield(rows){
+  var a=agg(rows);
+  var passed=a.passed, lost=Math.max(a.launched-a.passed,0);
+  mkChart('yield','doughnut',{
+    labels:['Passed','Lost/other'],
+    datasets:[{data:[passed,lost],backgroundColor:['#37c98b','#2a2f3a'],borderWidth:0}]
+  },{cutout:'68%',plugins:{legend:{display:false},
+      tooltip:{callbacks:{label:c=>c.label+': '+fmt(c.parsed)}}}},
+    ' '+(a.yield*100).toFixed(1)+'%');
+}
+
+// ==== BREAKDOWN TABLE ===========================================
+function drawBreak(){
+  var rows=activeRows();
+  var key=breakBy;                 // 'pn' | 'printer' | 'wo'
+  var groups={};
+  rows.forEach(function(r){
+    var g=r[key]||'(blank)';
+    var o=groups[g]||(groups[g]={name:g,launched:0,scrap:0,passed:0,cards:0,
+      sPrint:0,sPP:0,sQC:0});
+    o.launched+=r.launched;o.scrap+=r.scrap;o.passed+=r.passed;o.cards++;
+    o.sPrint+=r.sPrint;o.sPP+=r.sPP;o.sQC+=r.sQC;
+  });
+  var minVol=+document.getElementById('minVol').value||0;
+  var list=Object.values(groups).filter(o=>o.launched>=minVol).map(function(o){
+    o.rate=o.launched?o.scrap/o.launched:0;
+    o.yield=o.launched?o.passed/o.launched:0;
+    return o;
+  });
+  // sort
+  var k=sortState.key, dir=sortState.dir;
+  list.sort((a,b)=> (a[k]>b[k]?1:a[k]<b[k]?-1:0)*dir);
+
+  var maxScrap=Math.max.apply(null,list.map(o=>o.scrap).concat([1]));
+  var head=[['name',key==='pn'?'Part':key==='printer'?'Printer':'Work order'],
+    ['cards','Cards'],['launched','Launched'],['scrap','Scrapped'],
+    ['rate','Scrap rate'],['yield','Yield']];
+  var thead=document.querySelector('#breakTable thead');
+  thead.innerHTML='<tr>'+head.map(h=>'<th data-k="'+h[0]+'">'+h[1]+
+    (h[0]===k?(dir<0?' ▾':' ▴'):'')+'</th>').join('')+'</tr>';
+  thead.querySelectorAll('th').forEach(th=>th.onclick=()=>{
+    var nk=th.dataset.k;
+    if(nk===sortState.key) sortState.dir*=-1; else {sortState.key=nk;sortState.dir=-1;}
+    drawBreak();
+  });
+
+  var tbody=document.querySelector('#breakTable tbody');
+  tbody.innerHTML=list.slice(0,200).map(function(o){
+    var rc=o.rate>=0.15?'rate-hi':o.rate>=0.07?'rate-md':'rate-lo';
+    var w=Math.round(o.scrap/maxScrap*60);
+    var isSel=(key==='pn'&&F.part===o.name)||(key==='printer'&&F.printer===o.name)||(key==='wo'&&F.wo===o.name);
+    return '<tr class="'+(isSel?'sel':'')+'" data-n="'+esc(o.name)+'">'+
+      '<td>'+esc(o.name)+'</td>'+
+      '<td>'+fmt(o.cards)+'</td>'+
+      '<td>'+fmt(o.launched)+'</td>'+
+      '<td><span class="bar" style="width:'+w+'px"></span> '+fmt(o.scrap)+'</td>'+
+      '<td class="'+rc+'">'+(o.rate*100).toFixed(1)+'%</td>'+
+      '<td>'+(o.yield*100).toFixed(1)+'%</td></tr>';
+  }).join('');
+  // click row -> set that filter (drill down)
+  tbody.querySelectorAll('tr').forEach(tr=>tr.onclick=()=>{
+    var nm=tr.dataset.n;
+    if(key==='pn'){ F.part = F.part===nm?'':nm; document.getElementById('fPart').value=F.part; }
+    if(key==='printer'){ F.printer = F.printer===nm?'':nm; document.getElementById('fPrinter').value=F.printer; }
+    if(key==='wo'){ F.wo = F.wo===nm?'':nm; document.getElementById('fWO').value=F.wo; }
+    render();
+  });
+  document.getElementById('breakCount').textContent =
+    list.length+' '+ (key==='pn'?'parts':key==='printer'?'printers':'work orders')+
+    ' (min '+minVol+' launched)';
+}
+
+// ==== DATA QUALITY ==============================================
+function renderQuality(){
+  var flags=DATA.flags||[];
+  var card=document.getElementById('qualityCard');
+  document.querySelector('#qualityCard summary').innerHTML =
+    '⚠ Data quality — '+flags.length+' row'+(flags.length===1?'':'s')+' with an unreadable finish date';
+  if(!flags.length){ document.getElementById('qualityBody').innerHTML=
+    '<span class="muted">No broken dates. </span>'; return; }
+  document.getElementById('qualityBody').innerHTML =
+    '<div class="muted" style="margin-bottom:8px">These finished cards have a date that can\'t be parsed, '+
+    'so they\'re missing from the monthly trend. Fix them in TRACKING column J:</div>'+
+    '<table><thead><tr><th>Row</th><th style="text-align:left">Raw value</th></tr></thead><tbody>'+
+    flags.map(f=>'<tr><td style="text-align:left">'+f.row+'</td><td style="text-align:left"><code>'+
+      esc(f.value)+'</code></td></tr>').join('')+'</tbody></table>';
+}
+
+// ==== CHART HELPER ==============================================
+function mkChart(id,type,data,opts,centerText){
+  if(charts[id]) charts[id].destroy();
+  var ctx=document.getElementById(id).getContext('2d');
+  opts=opts||{}; opts.responsive=true; opts.maintainAspectRatio=false;
+  charts[id]=new Chart(ctx,{type:type,data:data,options:opts});
+}
+
+// ==== UTILS =====================================================
+function uniq(a){return Array.from(new Set(a));}
+function fillList(id,arr){document.getElementById(id).innerHTML=
+  arr.map(v=>'<option value="'+esc(v)+'">').join('');}
+function fmt(n){return (Math.round(n)).toLocaleString();}
+function pad(n){return n<10?'0'+n:n;}
+function cap(s){return s.charAt(0).toUpperCase()+s.slice(1);}
+function esc(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+load();
+</script>
+</body>
+</html>
