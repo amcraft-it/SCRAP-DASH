@@ -82,10 +82,21 @@
     <label>Time frame
       <select id="fTime">
         <option value="all">All time</option>
-        <option value="12">Last 12 months</option>
-        <option value="6">Last 6 months</option>
+        <option value="thisMonth">This month</option>
+        <option value="lastMonth">Last month</option>
         <option value="3">Last 3 months</option>
+        <option value="6">Last 6 months</option>
+        <option value="12">Last 12 months</option>
+        <option value="thisYear">This year</option>
+        <option value="lastYear">Last year</option>
+        <option value="custom">Custom range…</option>
       </select>
+    </label>
+    <label id="customFromWrap" style="display:none">From
+      <input type="month" id="fFrom">
+    </label>
+    <label id="customToWrap" style="display:none">To
+      <input type="month" id="fTo">
     </label>
     <label>Printer
       <select id="fPrinter"><option value="">All printers</option></select>
@@ -110,6 +121,9 @@
         <button data-m="scrap">Scrapped</button>
         <button data-m="launched">Launched</button>
         <button data-m="passed">Passed</button>
+      </span>
+      <span class="seg" style="margin-left:8px">
+        <button id="cmpBtn" title="Overlay each calendar year Jan–Dec">Compare years</button>
       </span>
     </h2>
     <canvas id="trend"></canvas>
@@ -174,7 +188,8 @@ function load(){
 }
 
 // ==== STATE =====================================================
-var F = { time:'all', printer:'', part:'', wo:'' };
+var F = { time:'all', printer:'', part:'', wo:'', from:'', to:'' };
+var compareYears = false;
 var trendMetric = 'rate';
 var breakBy = 'pn';
 var sortState = { key:'rate', dir:-1 };
@@ -194,16 +209,35 @@ function boot(){
   fillList('woList',   uniq(DATA.rows.map(r=>r.wo).filter(Boolean)).sort());
 
   // events
-  document.getElementById('fTime').onchange   = e=>{F.time=e.target.value;render();};
+  document.getElementById('fTime').onchange   = e=>{
+    F.time=e.target.value;
+    var isCustom=(F.time==='custom');
+    document.getElementById('customFromWrap').style.display=isCustom?'flex':'none';
+    document.getElementById('customToWrap').style.display=isCustom?'flex':'none';
+    render();
+  };
+  document.getElementById('fFrom').onchange = e=>{F.from=e.target.value;render();};
+  document.getElementById('fTo').onchange   = e=>{F.to=e.target.value;render();};
+  document.getElementById('cmpBtn').onclick = function(){
+    compareYears=!compareYears;
+    this.classList.toggle('on',compareYears);
+    drawTrend();
+  };
   document.getElementById('fPrinter').onchange= e=>{F.printer=e.target.value;render();};
   document.getElementById('fPart').oninput     = e=>{F.part=e.target.value.trim();render();};
   document.getElementById('fWO').oninput       = e=>{F.wo=e.target.value.trim();render();};
   document.getElementById('reset').onclick     = ()=>{
-    F={time:'all',printer:'',part:'',wo:''};
+    F={time:'all',printer:'',part:'',wo:'',from:'',to:''};
+    compareYears=false;
+    document.getElementById('cmpBtn').classList.remove('on');
     document.getElementById('fTime').value='all';
     document.getElementById('fPrinter').value='';
     document.getElementById('fPart').value='';
     document.getElementById('fWO').value='';
+    document.getElementById('fFrom').value='';
+    document.getElementById('fTo').value='';
+    document.getElementById('customFromWrap').style.display='none';
+    document.getElementById('customToWrap').style.display='none';
     render();
   };
   document.getElementById('minVol').oninput = render;
@@ -225,18 +259,37 @@ function boot(){
 }
 
 // ==== FILTERING =================================================
-function activeRows(){
-  var cutoff = null;
-  if(F.time!=='all'){
-    var months = parseInt(F.time,10);
-    var d = new Date(); d.setMonth(d.getMonth()-months);
-    cutoff = d.getFullYear()+'-'+pad(d.getMonth()+1);
+// returns {from, to} inclusive YYYY-MM bounds for the current time filter (or null = no bound)
+function timeBounds(){
+  var now=new Date();
+  var cy=now.getFullYear(), cm=now.getMonth()+1;
+  var curYm=cy+'-'+pad(cm);
+  function backMonths(n){var d=new Date(cy,cm-1-n,1);return d.getFullYear()+'-'+pad(d.getMonth()+1);}
+  switch(F.time){
+    case 'all':       return null;
+    case 'thisMonth': return {from:curYm,to:curYm};
+    case 'lastMonth': var l=backMonths(1); return {from:l,to:l};
+    case 'thisYear':  return {from:cy+'-01',to:curYm};
+    case 'lastYear':  return {from:(cy-1)+'-01',to:(cy-1)+'-12'};
+    case 'custom':
+      var f=F.from||'0000-00', t=F.to||'9999-99';
+      if(f>t){var tmp=f;f=t;t=tmp;}
+      return {from:f,to:t};
+    default:          // numeric "last N months" (N-1 back .. now, inclusive of current)
+      var n=parseInt(F.time,10)||0;
+      return {from:backMonths(n-1),to:curYm};
   }
+}
+function activeRows(){
+  var b=timeBounds();
   return DATA.rows.filter(function(r){
     if(F.printer && r.printer!==F.printer) return false;
     if(F.part && r.pn!==F.part) return false;
     if(F.wo && r.wo!==F.wo) return false;
-    if(cutoff && (!r.ym || r.ym < cutoff)) return false;
+    if(b){
+      if(!ymValid(r.ym)) return false;          // needs a real finished-month to fall in a range
+      if(r.ym<b.from || r.ym>b.to) return false;
+    }
     return true;
   });
 }
@@ -309,14 +362,18 @@ function monthly(rows){
   return m;
 }
 
+var MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+var YRCOL=['#4ea1ff','#37c98b','#f5b656','#f4695f','#b78bff','#8aa0b2'];
+
 function drawTrend(){
+  if(compareYears) return drawTrendCompare();
   var rows=activeRows();
   var months=axisMonths(rows);                 // clean, continuous x-axis
   var m=monthly(rows);
   var metric=trendMetric, isRate=(metric==='rate');
   var vals=months.map(function(k){
     var o=m[k];
-    if(!o) return isRate? null : 0;            // gap for rate, 0 for counts
+    if(!o) return isRate? null : 0;
     if(isRate) return o.launched? +(o.scrap/o.launched*100).toFixed(2) : null;
     return o[metric];
   });
@@ -325,14 +382,49 @@ function drawTrend(){
     datasets:[{
       label: isRate?'Scrap rate %':cap(metric),
       data:vals, borderColor:'#4ea1ff', backgroundColor:'rgba(78,161,255,.12)',
-      fill:true, tension:.25, pointRadius:3, pointHoverRadius:6, borderWidth:2,
-      spanGaps:true
+      fill:true, tension:.25, pointRadius:3, pointHoverRadius:6, borderWidth:2, spanGaps:true
     }]
   },{
     plugins:{legend:{display:false},
       tooltip:{callbacks:{label:c=> c.parsed.y==null?'no data':(isRate? c.parsed.y+'%' : fmt(c.parsed.y))}}},
     scales:{y:{ticks:{color:'#9aa4b2',callback:v=>isRate?v+'%':v},grid:{color:'#22262f'},beginAtZero:true},
             x:{ticks:{color:'#9aa4b2',maxRotation:0,autoSkip:true,maxTicksLimit:14},grid:{display:false}}}
+  });
+}
+
+// Year overlay: one line per calendar year on a Jan–Dec axis.
+// Ignores the time-frame dropdown (uses all valid data) but respects
+// printer / part / WO filters, so you can compare a part or printer YoY.
+function drawTrendCompare(){
+  var rows=DATA.rows.filter(function(r){
+    if(F.printer && r.printer!==F.printer) return false;
+    if(F.part && r.pn!==F.part) return false;
+    if(F.wo && r.wo!==F.wo) return false;
+    return ymValid(r.ym);
+  });
+  var metric=trendMetric, isRate=(metric==='rate');
+  // bucket by year -> month(0-11)
+  var byYear={};
+  rows.forEach(function(r){
+    var y=r.ym.slice(0,4), mi=+r.ym.slice(5)-1;
+    var yo=byYear[y]||(byYear[y]=Array.from({length:12},()=>({launched:0,scrap:0,passed:0,printed:0})));
+    var o=yo[mi]; o.launched+=r.launched;o.scrap+=r.scrap;o.passed+=r.passed;o.printed+=r.printed;
+  });
+  var years=Object.keys(byYear).sort();
+  var datasets=years.map(function(y,idx){
+    var col=YRCOL[idx%YRCOL.length];
+    var data=byYear[y].map(function(o){
+      if(isRate) return o.launched? +(o.scrap/o.launched*100).toFixed(2) : null;
+      return o.launched||o.scrap||o.passed||o.printed? o[metric] : null;
+    });
+    return {label:y,data:data,borderColor:col,backgroundColor:col,
+      fill:false,tension:.25,pointRadius:3,pointHoverRadius:6,borderWidth:2,spanGaps:true};
+  });
+  mkChart('trend','line',{labels:MON,datasets:datasets},{
+    plugins:{legend:{display:true,labels:{color:'#e8ecf3',boxWidth:12,usePointStyle:true}},
+      tooltip:{callbacks:{label:c=> c.dataset.label+': '+(c.parsed.y==null?'no data':(isRate?c.parsed.y+'%':fmt(c.parsed.y)))}}},
+    scales:{y:{ticks:{color:'#9aa4b2',callback:v=>isRate?v+'%':v},grid:{color:'#22262f'},beginAtZero:true},
+            x:{ticks:{color:'#9aa4b2'},grid:{display:false}}}
   });
 }
 
