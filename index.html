@@ -279,38 +279,60 @@ function drawKpis(rows){
     fmt(unbucketed)+'</div><div class="s">no finish date — excl. from trend</div></div>':'');
 }
 
-// monthly series (finished cards only)
+// ---- build a continuous month axis and bucket data onto it ----
+// A ym only counts if it is a real YYYY-MM within a sane window. Junk
+// keys (226-02, 20226-03) never match a generated month, so they vanish.
+var YM_RX=/^\d{4}-\d{2}$/;
+var YM_MIN='2024-01';                          // floor; nothing real predates this
+function currentYm(){var d=new Date();return d.getFullYear()+'-'+pad(d.getMonth()+1);}
+function ymValid(k){ return YM_RX.test(k) && k>=YM_MIN && k<=currentYm(); }
+function ymAdd(k,n){                            // step a YYYY-MM by n months
+  var y=+k.slice(0,4), m=+k.slice(5)-1+n;
+  y+=Math.floor(m/12); m=((m%12)+12)%12;
+  return y+'-'+pad(m+1);
+}
+function axisMonths(rows){
+  var present=rows.map(r=>r.ym).filter(ymValid);
+  if(!present.length) return [];
+  var lo=present.reduce((a,b)=>a<b?a:b);
+  var hi=present.reduce((a,b)=>a>b?a:b);
+  var out=[]; for(var k=lo;k<=hi;k=ymAdd(k,1)){ out.push(k); if(out.length>120)break; }
+  return out;
+}
 function monthly(rows){
   var m={};
   rows.forEach(function(r){
-    if(!r.ym) return;
+    if(!ymValid(r.ym)) return;                 // ignore junk / out-of-range dates
     var o=m[r.ym]||(m[r.ym]={launched:0,scrap:0,passed:0,printed:0});
     o.launched+=r.launched;o.scrap+=r.scrap;o.passed+=r.passed;o.printed+=r.printed;
   });
-  return Object.keys(m).sort().map(function(k){
-    var o=m[k]; o.ym=k; o.rate=o.launched?o.scrap/o.launched:0; return o;
-  });
+  return m;
 }
 
 function drawTrend(){
   var rows=activeRows();
-  var series=monthly(rows);
-  var labels=series.map(s=>s.ym);
-  var metric=trendMetric;
-  var vals=series.map(s=> metric==='rate'? +(s.rate*100).toFixed(2) : s[metric] );
-  var isRate=metric==='rate';
+  var months=axisMonths(rows);                 // clean, continuous x-axis
+  var m=monthly(rows);
+  var metric=trendMetric, isRate=(metric==='rate');
+  var vals=months.map(function(k){
+    var o=m[k];
+    if(!o) return isRate? null : 0;            // gap for rate, 0 for counts
+    if(isRate) return o.launched? +(o.scrap/o.launched*100).toFixed(2) : null;
+    return o[metric];
+  });
   mkChart('trend','line',{
-    labels:labels,
+    labels:months,
     datasets:[{
-      label: metric==='rate'?'Scrap rate %':cap(metric),
+      label: isRate?'Scrap rate %':cap(metric),
       data:vals, borderColor:'#4ea1ff', backgroundColor:'rgba(78,161,255,.12)',
-      fill:true, tension:.25, pointRadius:3, pointHoverRadius:6, borderWidth:2
+      fill:true, tension:.25, pointRadius:3, pointHoverRadius:6, borderWidth:2,
+      spanGaps:true
     }]
   },{
     plugins:{legend:{display:false},
-      tooltip:{callbacks:{label:c=> isRate? c.parsed.y+'%' : fmt(c.parsed.y)}}},
+      tooltip:{callbacks:{label:c=> c.parsed.y==null?'no data':(isRate? c.parsed.y+'%' : fmt(c.parsed.y))}}},
     scales:{y:{ticks:{color:'#9aa4b2',callback:v=>isRate?v+'%':v},grid:{color:'#22262f'},beginAtZero:true},
-            x:{ticks:{color:'#9aa4b2'},grid:{display:false}}}
+            x:{ticks:{color:'#9aa4b2',maxRotation:0,autoSkip:true,maxTicksLimit:14},grid:{display:false}}}
   });
 }
 
