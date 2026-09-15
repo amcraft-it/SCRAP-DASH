@@ -123,6 +123,7 @@
         <button data-m="passed">Passed</button>
       </span>
       <span class="seg" style="margin-left:8px">
+        <button id="cardBtn" title="One point per task card (needs a printer, part or work-order filter, or a short time frame)">By task card</button>
         <button id="cmpBtn" title="Overlay each calendar year Jan–Dec">Compare years</button>
       </span>
     </h2>
@@ -190,6 +191,7 @@ function load(){
 // ==== STATE =====================================================
 var F = { time:'all', printer:'', part:'', wo:'', from:'', to:'' };
 var compareYears = false;
+var byCard = false;
 var trendMetric = 'rate';
 var breakBy = 'pn';
 var sortState = { key:'rate', dir:-1 };
@@ -205,7 +207,7 @@ function boot(){
   var printers = uniq(DATA.rows.map(r=>r.printer).filter(Boolean)).sort();
   var sel = document.getElementById('fPrinter');
   printers.forEach(p=>{ var o=document.createElement('option');o.value=p;o.textContent=p;sel.appendChild(o); });
-  fillList('partList', uniq(DATA.rows.map(r=>r.pn).filter(Boolean)).sort());
+  fillList('partList', uniq(DATA.rows.map(r=>basePN(r.pn)).filter(Boolean)).sort());
   fillList('woList',   uniq(DATA.rows.map(r=>r.wo).filter(Boolean)).sort());
 
   // events
@@ -219,8 +221,13 @@ function boot(){
   document.getElementById('fFrom').onchange = e=>{F.from=e.target.value;render();};
   document.getElementById('fTo').onchange   = e=>{F.to=e.target.value;render();};
   document.getElementById('cmpBtn').onclick = function(){
-    compareYears=!compareYears;
+    compareYears=!compareYears; if(compareYears){byCard=false;document.getElementById('cardBtn').classList.remove('on');}
     this.classList.toggle('on',compareYears);
+    drawTrend();
+  };
+  document.getElementById('cardBtn').onclick = function(){
+    byCard=!byCard; if(byCard){compareYears=false;document.getElementById('cmpBtn').classList.remove('on');}
+    this.classList.toggle('on',byCard);
     drawTrend();
   };
   document.getElementById('fPrinter').onchange= e=>{F.printer=e.target.value;render();};
@@ -228,8 +235,9 @@ function boot(){
   document.getElementById('fWO').oninput       = e=>{F.wo=e.target.value.trim();render();};
   document.getElementById('reset').onclick     = ()=>{
     F={time:'all',printer:'',part:'',wo:'',from:'',to:''};
-    compareYears=false;
+    compareYears=false; byCard=false;
     document.getElementById('cmpBtn').classList.remove('on');
+    document.getElementById('cardBtn').classList.remove('on');
     document.getElementById('fTime').value='all';
     document.getElementById('fPrinter').value='';
     document.getElementById('fPart').value='';
@@ -284,7 +292,7 @@ function activeRows(){
   var b=timeBounds();
   return DATA.rows.filter(function(r){
     if(F.printer && r.printer!==F.printer) return false;
-    if(F.part && r.pn!==F.part) return false;
+    if(F.part && basePN(r.pn)!==F.part) return false;
     if(F.wo && r.wo!==F.wo) return false;
     if(b){
       if(!ymValid(r.ym)) return false;          // needs a real finished-month to fall in a range
@@ -377,6 +385,7 @@ function dayRange(fromYmd,toYmd){
 
 function drawTrend(){
   if(compareYears) return drawTrendCompare();
+  if(byCard) return drawTrendByCard();
   var rows=activeRows();
   var metric=trendMetric, isRate=(metric==='rate');
 
@@ -482,6 +491,45 @@ function drawTrendCompare(){
   });
 }
 
+// One point per task card, ordered by finish date. Y = card scrap rate.
+// Hover shows full card detail. Respects all filters incl. the time frame.
+function drawTrendByCard(){
+  var rows=activeRows().filter(function(r){ return r.finished && r.launched>0; });
+  rows.sort(function(a,b){ return (a.ymd<b.ymd?-1:a.ymd>b.ymd?1:0); });
+  if(rows.length>1500) rows=rows.slice(-1500);      // cap for sanity on very wide ranges
+  var pts=rows.map(function(r,i){
+    return { x:i, y:+(r.scrap/r.launched*100).toFixed(1), r:r };
+  });
+  // color by severity
+  function col(y){ return y>=15?'#f4695f':y>=7?'#f5b656':'#37c98b'; }
+  mkChart('trend','scatter',{
+    datasets:[{
+      label:'Task cards',
+      data:pts,
+      pointRadius:4, pointHoverRadius:7,
+      pointBackgroundColor:pts.map(p=>col(p.y)),
+      pointBorderColor:pts.map(p=>col(p.y))
+    }]
+  },{
+    plugins:{legend:{display:false},
+      tooltip:{callbacks:{
+        title:function(items){ var r=items[0].raw.r; return (r.pn||'(no part)'); },
+        label:function(c){ var r=c.raw.r; return [
+          'WO: '+(r.wo||'—'),
+          'Printer: '+(r.printer||'—'),
+          'Finished: '+(r.ymd||'—'),
+          'Launched: '+fmt(r.launched)+'   Printed: '+fmt(r.printed),
+          'Passed: '+fmt(r.passed)+'   Scrapped: '+fmt(r.scrap),
+          'Scrap rate: '+c.parsed.y+'%   (print '+fmt(r.sPrint)+' / PP '+fmt(r.sPP)+' / QC '+fmt(r.sQC)+')'
+        ]; }
+      }}},
+    scales:{
+      y:{ticks:{color:'#9aa4b2',callback:v=>v+'%'},grid:{color:'#22262f'},beginAtZero:true,title:{display:true,text:'Scrap rate',color:'#9aa4b2'}},
+      x:{ticks:{display:false},grid:{display:false},title:{display:true,text:rows.length+' cards (oldest → newest)',color:'#9aa4b2'}}
+    }
+  });
+}
+
 function drawStages(rows){
   var a=agg(rows);
   mkChart('stages','bar',{
@@ -511,7 +559,7 @@ function drawBreak(){
   var key=breakBy;                 // 'pn' | 'printer' | 'wo'
   var groups={};
   rows.forEach(function(r){
-    var g=r[key]||'(blank)';
+    var g=(key==='pn'? basePN(r.pn) : r[key])||'(blank)';
     var o=groups[g]||(groups[g]={name:g,launched:0,scrap:0,passed:0,cards:0,
       sPrint:0,sPP:0,sQC:0});
     o.launched+=r.launched;o.scrap+=r.scrap;o.passed+=r.passed;o.cards++;
@@ -592,6 +640,8 @@ function mkChart(id,type,data,opts,centerText){
 
 // ==== UTILS =====================================================
 function uniq(a){return Array.from(new Set(a));}
+function basePN(s){ return String(s||'').replace(/,\s*Rev\.?\s*.*$/i,'').trim(); }
+
 function fillList(id,arr){document.getElementById(id).innerHTML=
   arr.map(v=>'<option value="'+esc(v)+'">').join('');}
 function fmt(n){return (Math.round(n)).toLocaleString();}
