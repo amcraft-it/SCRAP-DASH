@@ -115,7 +115,7 @@
   <div class="kpis" id="kpis"></div>
 
   <div class="card">
-    <h2>Monthly trend <span class="hint">finished cards only · click a point to focus that month</span>
+    <h2>Monthly trend <span class="hint">finished cards only · daily view when a single month is selected</span>
       <span class="seg" id="trendSeg">
         <button data-m="rate" class="on">Scrap rate</button>
         <button data-m="scrap">Scrapped</button>
@@ -365,12 +365,66 @@ function monthly(rows){
 var MON=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 var YRCOL=['#4ea1ff','#37c98b','#f5b656','#f4695f','#b78bff','#8aa0b2'];
 
+// number of days between two YYYY-MM-DD (or first-of-month) bounds
+function daysBetween(a,b){ return Math.round((Date.parse(b)-Date.parse(a))/86400000); }
+function pad2(n){return n<10?'0'+n:''+n;}
+// all YYYY-MM-DD from from..to inclusive
+function dayRange(fromYmd,toYmd){
+  var out=[], d=new Date(fromYmd+'T00:00:00'), end=new Date(toYmd+'T00:00:00');
+  while(d<=end){ out.push(d.getFullYear()+'-'+pad2(d.getMonth()+1)+'-'+pad2(d.getDate())); d.setDate(d.getDate()+1); if(out.length>400)break; }
+  return out;
+}
+
 function drawTrend(){
   if(compareYears) return drawTrendCompare();
   var rows=activeRows();
-  var months=axisMonths(rows);                 // clean, continuous x-axis
-  var m=monthly(rows);
   var metric=trendMetric, isRate=(metric==='rate');
+
+  // decide granularity: daily when the active window spans a single month-ish range
+  var b=timeBounds();               // {from,to} in YYYY-MM, or null
+  var daily=false, dayFrom, dayTo;
+  if(b){
+    dayFrom=b.from+'-01';
+    // last day of b.to month
+    var ty=+b.to.slice(0,4), tm=+b.to.slice(5);
+    var lastDay=new Date(ty,tm,0).getDate();
+    dayTo=b.to+'-'+pad2(lastDay);
+    if(daysBetween(dayFrom,dayTo)<=62) daily=true;   // ≤ ~2 months -> daily
+  }
+
+  if(daily){
+    var days=dayRange(dayFrom,dayTo);
+    var dm={};
+    rows.forEach(function(r){
+      if(!r.ymd) return;
+      var o=dm[r.ymd]||(dm[r.ymd]={launched:0,scrap:0,passed:0,printed:0});
+      o.launched+=r.launched;o.scrap+=r.scrap;o.passed+=r.passed;o.printed+=r.printed;
+    });
+    var vals=days.map(function(k){
+      var o=dm[k];
+      if(!o) return isRate? null : 0;
+      if(isRate) return o.launched? +(o.scrap/o.launched*100).toFixed(2) : null;
+      return o[metric];
+    });
+    mkChart('trend','line',{
+      labels:days,
+      datasets:[{label:isRate?'Scrap rate %':cap(metric),data:vals,
+        borderColor:'#4ea1ff',backgroundColor:'rgba(78,161,255,.12)',
+        fill:true,tension:.25,pointRadius:2,pointHoverRadius:6,borderWidth:2,spanGaps:true}]
+    },{
+      plugins:{legend:{display:false},
+        tooltip:{callbacks:{label:c=> c.parsed.y==null?'no data':(isRate?c.parsed.y+'%':fmt(c.parsed.y))}}},
+      scales:{y:{ticks:{color:'#9aa4b2',callback:v=>isRate?v+'%':v},grid:{color:'#22262f'},beginAtZero:true},
+              x:{ticks:{color:'#9aa4b2',maxRotation:0,autoSkip:true,maxTicksLimit:16,
+                 callback:function(v){var l=this.getLabelForValue(v);return l?l.slice(8):l;}},
+                 grid:{display:false}}}
+    });
+    return;
+  }
+
+  // monthly (default)
+  var months=axisMonths(rows);
+  var m=monthly(rows);
   var vals=months.map(function(k){
     var o=m[k];
     if(!o) return isRate? null : 0;
