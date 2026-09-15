@@ -109,6 +109,13 @@
       <input type="search" id="fWO" list="woList" placeholder="All work orders">
       <datalist id="woList"></datalist>
     </label>
+    <label>Lifecycle
+      <select id="fDone">
+        <option value="all">All cards</option>
+        <option value="done">Done only</option>
+        <option value="open">In progress</option>
+      </select>
+    </label>
     <button class="reset" id="reset">Reset</button>
   </div>
 
@@ -189,7 +196,7 @@ function load(){
 }
 
 // ==== STATE =====================================================
-var F = { time:'all', printer:'', part:'', wo:'', from:'', to:'' };
+var F = { time:'all', printer:'', part:'', wo:'', from:'', to:'', done:'all' };
 var compareYears = false;
 var byCard = false;
 var trendMetric = 'rate';
@@ -233,8 +240,9 @@ function boot(){
   document.getElementById('fPrinter').onchange= e=>{F.printer=e.target.value;render();};
   document.getElementById('fPart').oninput     = e=>{F.part=e.target.value.trim();render();};
   document.getElementById('fWO').oninput       = e=>{F.wo=e.target.value.trim();render();};
+  document.getElementById('fDone').onchange     = e=>{F.done=e.target.value;render();};
   document.getElementById('reset').onclick     = ()=>{
-    F={time:'all',printer:'',part:'',wo:'',from:'',to:''};
+    F={time:'all',printer:'',part:'',wo:'',from:'',to:'',done:'all'};
     compareYears=false; byCard=false;
     document.getElementById('cmpBtn').classList.remove('on');
     document.getElementById('cardBtn').classList.remove('on');
@@ -242,6 +250,7 @@ function boot(){
     document.getElementById('fPrinter').value='';
     document.getElementById('fPart').value='';
     document.getElementById('fWO').value='';
+    document.getElementById('fDone').value='all';
     document.getElementById('fFrom').value='';
     document.getElementById('fTo').value='';
     document.getElementById('customFromWrap').style.display='none';
@@ -294,6 +303,8 @@ function activeRows(){
     if(F.printer && r.printer!==F.printer) return false;
     if(F.part && basePN(r.pn)!==F.part) return false;
     if(F.wo && r.wo!==F.wo) return false;
+    if(F.done==='done' && !r.done) return false;
+    if(F.done==='open' && r.done) return false;
     if(b){
       if(!ymValid(r.ym)) return false;          // needs a real finished-month to fall in a range
       if(r.ym<b.from || r.ym>b.to) return false;
@@ -526,7 +537,9 @@ function drawTrendByCard(){
         pointRadius:0, fill:false, order:2 },
       { label:'Task cards', data:pts, order:3,
         pointRadius:4, pointHoverRadius:7,
-        pointBackgroundColor:pts.map(p=>col(p.y)),
+        pointStyle:pts.map(p=>p.r.done?'circle':'crossRot'),
+        pointBorderWidth:pts.map(p=>p.r.done?1:2),
+        pointBackgroundColor:pts.map(p=>p.r.done?col(p.y):'transparent'),
         pointBorderColor:pts.map(p=>col(p.y)) }
     ]
   },{
@@ -536,6 +549,7 @@ function drawTrendByCard(){
         callbacks:{
         title:function(items){ var r=items[0].raw.r; return (r.pn||'(no part)'); },
         label:function(c){ var r=c.raw.r; return [
+          'Status: '+(r.done?'Done ✓':'In progress'),
           'WO: '+(r.wo||'—'),
           'Printer: '+(r.printer||'—'),
           'Finished: '+(r.ymd||'—'),
@@ -546,7 +560,7 @@ function drawTrendByCard(){
       }}},
     scales:{
       y:{ticks:{color:'#9aa4b2',callback:v=>v+'%'},grid:{color:'#22262f'},beginAtZero:true,title:{display:true,text:'Scrap rate',color:'#9aa4b2'}},
-      x:{type:'linear',ticks:{display:false},grid:{display:false},title:{display:true,text:rows.length+' cards (oldest → newest)',color:'#9aa4b2'}}
+      x:{type:'linear',ticks:{display:false},grid:{display:false},title:{display:true,text:rows.length+' cards (oldest → newest)  ·  ● done   ✳ in progress',color:'#9aa4b2'}}
     }
   });
 }
