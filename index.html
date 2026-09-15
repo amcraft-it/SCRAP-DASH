@@ -28,7 +28,7 @@
   button.reset{align-self:flex-end;background:var(--chip);color:var(--ink);
     border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
   button.reset:hover{border-color:var(--accent)}
-  .kpis{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:18px}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:18px}
   .kpi{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:12px 14px}
   .kpi .l{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.4px}
   .kpi .v{font-size:22px;font-weight:650;margin-top:4px}
@@ -116,6 +116,15 @@
         <option value="open">In progress</option>
       </select>
     </label>
+    <label title="Model spool: €690 / 1510 cm³">€/cm³ model
+      <input type="number" id="rModel" value="0.457" step="0.001" style="min-width:90px">
+    </label>
+    <label title="Support spool: €510 / 1510 cm³">€/cm³ support
+      <input type="number" id="rSupport" value="0.338" step="0.001" style="min-width:90px">
+    </label>
+    <label title="Printing €25 + electricity €4.05 per hour">€/machine-h
+      <input type="number" id="rHour" value="29.05" step="0.05" style="min-width:90px">
+    </label>
     <button class="reset" id="reset">Reset</button>
   </div>
 
@@ -199,9 +208,10 @@ function load(){
 var F = { time:'all', printer:'', part:'', wo:'', from:'', to:'', done:'all' };
 var compareYears = false;
 var byCard = false;
+var RATE={model:0.457,support:0.338,hour:29.05};
 var trendMetric = 'rate';
 var breakBy = 'pn';
-var sortState = { key:'rate', dir:-1 };
+var sortState = { key:'cost', dir:-1 };
 var charts = {};
 
 function boot(){
@@ -241,6 +251,9 @@ function boot(){
   document.getElementById('fPart').oninput     = e=>{F.part=e.target.value.trim();render();};
   document.getElementById('fWO').oninput       = e=>{F.wo=e.target.value.trim();render();};
   document.getElementById('fDone').onchange     = e=>{F.done=e.target.value;render();};
+  document.getElementById('rModel').oninput    = e=>{RATE.model=parseFloat(e.target.value)||0;render();};
+  document.getElementById('rSupport').oninput  = e=>{RATE.support=parseFloat(e.target.value)||0;render();};
+  document.getElementById('rHour').oninput      = e=>{RATE.hour=parseFloat(e.target.value)||0;render();};
   document.getElementById('reset').onclick     = ()=>{
     F={time:'all',printer:'',part:'',wo:'',from:'',to:'',done:'all'};
     compareYears=false; byCard=false;
@@ -323,25 +336,62 @@ function render(){
   drawBreak();
 }
 
+// scrapped material cost (€) for a row
+function rowMatCost(r){
+  if(r.model==null && r.support==null) return null;
+  return r.scrap*((RATE.model*(r.model||0))+(RATE.support*(r.support||0)));
+}
+// scrapped machine-time cost (€) for a row
+function rowTimeCost(r){
+  if(r.ptime==null) return null;
+  return r.scrap*(r.ptime/60)*RATE.hour;
+}
+// total scrap cost = material + machine time (whichever data exists)
+function rowScrapCost(r){
+  var m=rowMatCost(r), t=rowTimeCost(r);
+  if(m==null && t==null) return null;
+  return (m||0)+(t||0);
+}
+function rowScrapCm3(r){
+  if(r.model==null && r.support==null) return null;
+  return r.scrap*((r.model||0)+(r.support||0));
+}
+function rowScrapHours(r){
+  if(r.ptime==null) return null;
+  return r.scrap*r.ptime/60;
+}
 function agg(rows){
-  var a={launched:0,printed:0,passed:0,scrap:0,sPrint:0,sPP:0,sQC:0,cards:0};
-  rows.forEach(r=>{a.launched+=r.launched;a.printed+=r.printed;a.passed+=r.passed;
-    a.scrap+=r.scrap;a.sPrint+=r.sPrint;a.sPP+=r.sPP;a.sQC+=r.sQC;a.cards++;});
+  var a={launched:0,printed:0,passed:0,scrap:0,sPrint:0,sPP:0,sQC:0,cards:0,
+         cost:0,matCost:0,timeCost:0,cm3:0,hours:0,scrapCovered:0};
+  rows.forEach(function(r){
+    a.launched+=r.launched;a.printed+=r.printed;a.passed+=r.passed;
+    a.scrap+=r.scrap;a.sPrint+=r.sPrint;a.sPP+=r.sPP;a.sQC+=r.sQC;a.cards++;
+    var mc=rowMatCost(r), tc=rowTimeCost(r);
+    if(mc!=null){a.matCost+=mc;}
+    if(tc!=null){a.timeCost+=tc;}
+    if(mc!=null||tc!=null){a.cost+=(mc||0)+(tc||0); a.scrapCovered+=r.scrap;}
+    var v=rowScrapCm3(r);  if(v!=null) a.cm3+=v;
+    var h=rowScrapHours(r);if(h!=null) a.hours+=h;
+  });
   a.rate = a.launched? a.scrap/a.launched : 0;
   a.yield = a.launched? a.passed/a.launched : 0;
+  a.coverage = a.scrap? a.scrapCovered/a.scrap : 0;   // fraction of scrapped parts with material data
   return a;
 }
 
 function drawKpis(rows){
   var a=agg(rows);
   var unbucketed = rows.filter(r=>!r.finished).length;
+  var covNote = a.coverage<0.999 ? ('covers '+Math.round(a.coverage*100)+'% of scrap') : 'material + support';
   var kpis=[
     ['Cards', fmt(a.cards), F.time==='all'?'all':'in range'],
     ['Launched', fmt(a.launched), ''],
-    ['Printed', fmt(a.printed), ''],
     ['Passed', fmt(a.passed), (a.yield*100).toFixed(1)+'% yield'],
     ['Total scrapped', fmt(a.scrap), 'per-card total'],
-    ['Scrap rate', (a.rate*100).toFixed(2)+'%', 'scrapped ÷ launched', 'rate']
+    ['Scrap rate', (a.rate*100).toFixed(2)+'%', 'scrapped ÷ launched', 'rate'],
+    ['€ lost to scrap', '€'+fmt(a.cost), '€'+fmt(a.matCost)+' mat + €'+fmt(a.timeCost)+' time', 'rate'],
+    ['Material wasted', fmt(a.cm3)+' cm³', 'model + support'],
+    ['Print time lost', fmt(a.hours)+' h', 'machine hours']
   ];
   document.getElementById('kpis').innerHTML = kpis.map(function(k){
     return '<div class="kpi '+(k[3]||'')+'"><div class="l">'+k[0]+'</div>'+
@@ -596,9 +646,10 @@ function drawBreak(){
   rows.forEach(function(r){
     var g=(key==='pn'? basePN(r.pn) : r[key])||'(blank)';
     var o=groups[g]||(groups[g]={name:g,launched:0,scrap:0,passed:0,cards:0,
-      sPrint:0,sPP:0,sQC:0});
+      sPrint:0,sPP:0,sQC:0,cost:0});
     o.launched+=r.launched;o.scrap+=r.scrap;o.passed+=r.passed;o.cards++;
     o.sPrint+=r.sPrint;o.sPP+=r.sPP;o.sQC+=r.sQC;
+    var c=rowScrapCost(r); if(c!=null) o.cost+=c;
   });
   var minVol=+document.getElementById('minVol').value||0;
   var list=Object.values(groups).filter(o=>o.launched>=minVol).map(function(o){
@@ -613,7 +664,7 @@ function drawBreak(){
   var maxScrap=Math.max.apply(null,list.map(o=>o.scrap).concat([1]));
   var head=[['name',key==='pn'?'Part':key==='printer'?'Printer':'Work order'],
     ['cards','Cards'],['launched','Launched'],['scrap','Scrapped'],
-    ['rate','Scrap rate'],['yield','Yield']];
+    ['cost','€ scrapped'],['rate','Scrap rate'],['yield','Yield']];
   var thead=document.querySelector('#breakTable thead');
   thead.innerHTML='<tr>'+head.map(h=>'<th data-k="'+h[0]+'">'+h[1]+
     (h[0]===k?(dir<0?' ▾':' ▴'):'')+'</th>').join('')+'</tr>';
@@ -633,6 +684,7 @@ function drawBreak(){
       '<td>'+fmt(o.cards)+'</td>'+
       '<td>'+fmt(o.launched)+'</td>'+
       '<td><span class="bar" style="width:'+w+'px"></span> '+fmt(o.scrap)+'</td>'+
+      '<td>€'+fmt(o.cost)+'</td>'+
       '<td class="'+rc+'">'+(o.rate*100).toFixed(1)+'%</td>'+
       '<td>'+(o.yield*100).toFixed(1)+'%</td></tr>';
   }).join('');
